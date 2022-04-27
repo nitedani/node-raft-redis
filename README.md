@@ -1,6 +1,4 @@
-node-raft-redis
-
-Consensus for node microservices. Requires redis as a medium.
+Consensus for node microservices, based on the [raft algorithm](https://raft.github.io/). Requires redis as a medium.
 
 Features automatic discovery of the services of same kind.
 Selects one instance of a microservice as leader. 
