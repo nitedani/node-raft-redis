@@ -1,6 +1,6 @@
 {
   "name": "node-raft-redis",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "",
   "main": "./lib/cjs/index.js",
   "typings": "./lib/cjs/index.d.ts",
@@ -13,6 +13,10 @@
     "build": "npm run build:esm && npm run  build:cjs",
     "build:esm": "tsc --module esnext --outDir lib/esm",
     "build:cjs": "tsc --module commonjs --outDir lib/cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nitedani/node-raft-redis"
   },
   "keywords": [
     "node",
