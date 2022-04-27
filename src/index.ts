@@ -3,8 +3,8 @@ import { EventEmitter } from "events";
 import cuid from "cuid";
 
 const randomTimeout = () => {
-  const min = 200;
-  const max = 300;
+  const min = 1000;
+  const max = 1500;
   return Math.floor(Math.random() * (max - min + 1)) + min;
 };
 
@@ -53,6 +53,9 @@ export class Candidate extends EventEmitter {
         },
       });
     }
+    this.redisClient.on("error", (err) => {
+      console.log(err);
+    });
   }
 
   private async getNodeCount() {
@@ -61,18 +64,25 @@ export class Candidate extends EventEmitter {
       Date.now()
     );
     const keys = await this.redisClient.keys(`consensus-nodes:${this.kind}:*`);
-    let count = 0;
+
+    const alive = [];
+    const dead = [];
     for (const key of keys) {
       // val is a timestamp
       const val = await this.redisClient.get(key);
       // if val is older than 2 seconds, delete it
-      if (val && Date.now() - parseInt(val, 10) > 2000) {
-        await this.redisClient.del(key);
+      if (val && Date.now() - parseInt(val, 10) > 5000) {
+        dead.push(key);
       } else {
-        count++;
+        alive.push(key);
       }
     }
-    return count;
+
+    if (dead.length) {
+      await this.redisClient.del(dead);
+    }
+
+    return alive.length;
   }
 
   async startTimeout() {
@@ -121,19 +131,19 @@ export class Candidate extends EventEmitter {
         `consensus-events:${this.kind}`,
         JSON.stringify(_message)
       );
-    }, 150);
+    }, 750);
   }
 
   async run() {
     await this.redisClient.connect();
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, randomTimeout()));
     let count = await this.getNodeCount();
     setInterval(async () => {
       count = await this.getNodeCount();
       if (count === 1 && this.state !== "leader") {
         this.startLeadership();
       }
-    }, 500);
+    }, 2500);
 
     const subscriber = this.redisClient.duplicate();
 
@@ -184,7 +194,7 @@ export class Candidate extends EventEmitter {
           message.currentTerm === this.currentTerm
         ) {
           this.votes++;
-          if (this.votes >= count / 2 + 1) {
+          if (this.votes >= Math.floor(count / 2) + 1) {
             this.startLeadership();
           }
         }

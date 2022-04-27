@@ -1,6 +1,6 @@
 {
   "name": "node-raft-redis",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "",
   "type": "module",
   "main": "./lib/cjs/index.js",
@@ -10,7 +10,7 @@
     "require": "./lib/cjs/index.js"
   },
   "scripts": {
-    "start": "ts-node-dev --transpile-only src/index.ts",
+    "start": "ts-node-dev --transpile-only src/test.ts",
     "build": "npm run build:esm && npm run  build:cjs",
     "build:esm": "tsc --outDir lib/esm",
     "build:cjs": "tsc --module commonjs --outDir lib/cjs"
