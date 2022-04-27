@@ -1,6 +1,6 @@
 {
   "name": "node-raft-redis",
-  "version": "0.0.9",
+  "version": "0.0.11",
   "description": "",
   "main": "./lib/cjs/index.js",
   "typings": "./lib/cjs/index.d.ts",

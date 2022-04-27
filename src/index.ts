@@ -120,7 +120,6 @@ export class Candidate extends EventEmitter {
     if (this.timeout) {
       clearTimeout(this.timeout);
     }
-    this.setState("leader");
 
     const _message: Message = {
       type: "request",
@@ -140,17 +139,20 @@ export class Candidate extends EventEmitter {
         JSON.stringify(_message)
       );
     }, 750);
+    this.setState("leader");
   }
 
   private setState(state: State) {
     if (this.state !== state) {
+      const old = this.state;
+      this.state = state;
+
       if (state === "leader") {
         this.emit("elected");
       }
-      if (this.state === "leader") {
+      if (old === "leader") {
         this.emit("defeated");
       }
-      this.state = state;
       this.emit("statechange", state);
     }
   }
@@ -195,6 +197,26 @@ export class Candidate extends EventEmitter {
     this.subscriptionClient.on("error", (err) => {
       this.emit("error", err);
     });
+
+    this.subscriptionClient.subscribe(
+      `consensus-messages:${this.kind}:followers`,
+      (str) => {
+        const { message, from } = JSON.parse(str);
+        if (this.state === "follower" && from !== this.nodeId) {
+          this.emit("message", message);
+        }
+      }
+    );
+
+    this.subscriptionClient.subscribe(
+      `consensus-messages:${this.kind}:leader`,
+      (str) => {
+        const { message, from } = JSON.parse(str);
+        if (this.state === "leader" && from !== this.nodeId) {
+          this.emit("message", message);
+        }
+      }
+    );
 
     this.subscriptionClient.subscribe(
       `consensus-events:${this.kind}`,
@@ -315,14 +337,31 @@ export class Candidate extends EventEmitter {
       if (this.leadershipInterval) {
         clearInterval(this.leadershipInterval);
       }
-
       this.setState("follower");
       this.votes = 0;
       this.votedFor = "";
-      this.nodeId = randomString();
-
       this.startTimeout();
     }
+  }
+
+  async messageFollowers(message: string) {
+    if (this.state !== "leader") {
+      return;
+    }
+    await this.redisClient.publish(
+      `consensus-messages:${this.kind}:followers`,
+      JSON.stringify({ message, from: this.nodeId })
+    );
+  }
+
+  async messageLeader(message: string) {
+    if (this.state !== "follower") {
+      return;
+    }
+    await this.redisClient.publish(
+      `consensus-messages:${this.kind}:leader`,
+      JSON.stringify({ message, from: this.nodeId })
+    );
   }
 }
 export default Candidate;

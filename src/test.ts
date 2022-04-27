@@ -9,13 +9,19 @@ const candidate = new Candidate({
   kind: "my-service",
 });
 
-candidate.on("elected", () => {
+candidate.on("elected", async () => {
   console.log("elected");
   // You can be sure only this instance is the leader.
+
+  candidate.messageFollowers("Hello from leader");
 
   // The leader can start a re-election with stepdown()
   // It is possible for this instance to be elected again.
   // candidate.stepdown();
+});
+
+candidate.on("message", (message) => {
+  console.log(message);
 });
 
 candidate.on("error", (err) => {
