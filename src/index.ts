@@ -1,6 +1,5 @@
 import { createClient, RedisClientType } from "redis";
 import { EventEmitter } from "events";
-import cuid from "cuid";
 
 const randomTimeout = () => {
   const min = 1000;
@@ -8,6 +7,12 @@ const randomTimeout = () => {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 };
 
+const randomString = () => {
+  return (
+    Math.random().toString(36).substring(2, 15) +
+    Math.random().toString(36).substring(2, 15)
+  );
+};
 export interface Options {
   redis: {
     host?: string;
@@ -29,7 +34,8 @@ type State = "candidate" | "leader" | "follower";
 export class Candidate extends EventEmitter {
   kind: string = "";
   redisClient: RedisClientType;
-  nodeId = cuid();
+  subscriptionClient: RedisClientType | null = null;
+  nodeId = randomString();
 
   state: State = "follower";
   currentTerm = 1;
@@ -37,7 +43,13 @@ export class Candidate extends EventEmitter {
 
   votes = 0;
   timeout: NodeJS.Timeout | null = null;
-  leadershipTimeout: NodeJS.Timeout | null = null;
+  leadershipInterval: NodeJS.Timer | null = null;
+  countNodesInterval: NodeJS.Timer | null = null;
+  stopCheckInterval: NodeJS.Timer | null = null;
+  startCheckInterval: NodeJS.Timer | null = null;
+
+  running = false;
+  connected = false;
 
   constructor(options: Options) {
     super();
@@ -54,7 +66,7 @@ export class Candidate extends EventEmitter {
       });
     }
     this.redisClient.on("error", (err) => {
-      console.log(err);
+      this.emit("error", err);
     });
   }
 
@@ -68,9 +80,7 @@ export class Candidate extends EventEmitter {
     const alive = [];
     const dead = [];
     for (const key of keys) {
-      // val is a timestamp
       const val = await this.redisClient.get(key);
-      // if val is older than 2 seconds, delete it
       if (val && Date.now() - parseInt(val, 10) > 5000) {
         dead.push(key);
       } else {
@@ -112,7 +122,8 @@ export class Candidate extends EventEmitter {
     if (this.timeout) {
       clearTimeout(this.timeout);
     }
-    this.state = "leader";
+    this.setState("leader");
+
     const _message: Message = {
       type: "request",
       from: this.nodeId,
@@ -122,11 +133,10 @@ export class Candidate extends EventEmitter {
       `consensus-events:${this.kind}`,
       JSON.stringify(_message)
     );
-    this.emit("elected");
-    if (this.leadershipTimeout) {
-      clearTimeout(this.leadershipTimeout);
+    if (this.leadershipInterval) {
+      clearTimeout(this.leadershipInterval);
     }
-    this.leadershipTimeout = setInterval(() => {
+    this.leadershipInterval = setInterval(() => {
       this.redisClient.publish(
         `consensus-events:${this.kind}`,
         JSON.stringify(_message)
@@ -134,78 +144,184 @@ export class Candidate extends EventEmitter {
     }, 750);
   }
 
-  async run() {
+  private setState(state: State) {
+    if (this.state !== state) {
+      if (state === "leader") {
+        this.emit("elected");
+      }
+      if (this.state === "leader") {
+        this.emit("defeated");
+      }
+      this.state = state;
+      this.emit("statechange", state);
+    }
+  }
+
+  private async _stop() {
+    try {
+      if (this.timeout) {
+        clearTimeout(this.timeout);
+      }
+      if (this.leadershipInterval) {
+        clearTimeout(this.leadershipInterval);
+      }
+      if (this.countNodesInterval) {
+        clearTimeout(this.countNodesInterval);
+      }
+      if (this.subscriptionClient?.isOpen) {
+        await this.subscriptionClient.unsubscribe();
+        await this.subscriptionClient.quit();
+      }
+      if (this.redisClient?.isOpen) {
+        await this.redisClient.quit();
+      }
+      this.running = false;
+    } catch (error) {
+      this.emit("error", error);
+    }
+  }
+
+  private async _start() {
+    this.running = true;
     await this.redisClient.connect();
     await new Promise((r) => setTimeout(r, randomTimeout()));
     let count = await this.getNodeCount();
-    setInterval(async () => {
+    this.countNodesInterval = setInterval(async () => {
       count = await this.getNodeCount();
       if (count === 1 && this.state !== "leader") {
         this.startLeadership();
       }
     }, 2500);
 
-    const subscriber = this.redisClient.duplicate();
+    this.subscriptionClient = this.redisClient.duplicate();
+    this.subscriptionClient.on("error", (err) => {
+      this.emit("error", err);
+    });
 
-    subscriber.subscribe(`consensus-events:${this.kind}`, (str) => {
-      const message = JSON.parse(str) as Message;
-      if (message.from === this.nodeId) {
-        return;
-      }
-      if (message.type === "request") {
-        if (
-          this.currentTerm < message.currentTerm ||
-          (this.state === "follower" &&
-            this.currentTerm <= message.currentTerm &&
-            this.votedFor === message.from)
-        ) {
-          this.state = "follower";
-          this.currentTerm = message.currentTerm;
-          this.votedFor = message.from;
-
-          const reply: Message = {
-            type: "vote",
-            from: this.nodeId,
-            to: message.from,
-            granted: true,
-            currentTerm: this.currentTerm,
-          };
-          this.redisClient.publish(
-            `consensus-events:${this.kind}`,
-            JSON.stringify(reply)
-          );
-          this.startTimeout();
-        } else {
-          const reply: Message = {
-            type: "vote",
-            from: this.nodeId,
-            to: message.from,
-            granted: false,
-            currentTerm: this.currentTerm,
-          };
-          this.redisClient.publish(
-            `consensus-events:${this.kind}`,
-            JSON.stringify(reply)
-          );
+    this.subscriptionClient.subscribe(
+      `consensus-events:${this.kind}`,
+      (str) => {
+        const message = JSON.parse(str) as Message;
+        if (message.from === this.nodeId) {
+          return;
         }
-      } else {
-        if (
-          this.state === "candidate" &&
-          message.to === this.nodeId &&
-          message.granted &&
-          message.currentTerm === this.currentTerm
-        ) {
-          this.votes++;
-          if (this.votes >= Math.floor(count / 2) + 1) {
-            this.startLeadership();
+        if (message.type === "request") {
+          if (
+            this.currentTerm < message.currentTerm ||
+            (this.state === "follower" &&
+              this.currentTerm <= message.currentTerm &&
+              this.votedFor === message.from)
+          ) {
+            this.setState("follower");
+            this.currentTerm = message.currentTerm;
+            this.votedFor = message.from;
+
+            const reply: Message = {
+              type: "vote",
+              from: this.nodeId,
+              to: message.from,
+              granted: true,
+              currentTerm: this.currentTerm,
+            };
+            this.redisClient.publish(
+              `consensus-events:${this.kind}`,
+              JSON.stringify(reply)
+            );
+            this.startTimeout();
+          } else {
+            const reply: Message = {
+              type: "vote",
+              from: this.nodeId,
+              to: message.from,
+              granted: false,
+              currentTerm: this.currentTerm,
+            };
+            this.redisClient.publish(
+              `consensus-events:${this.kind}`,
+              JSON.stringify(reply)
+            );
+          }
+        } else {
+          if (
+            this.state === "candidate" &&
+            message.to === this.nodeId &&
+            message.granted &&
+            message.currentTerm === this.currentTerm
+          ) {
+            this.votes++;
+            if (this.votes >= Math.floor(count / 2) + 1) {
+              this.startLeadership();
+            }
           }
         }
       }
-    });
+    );
 
-    await subscriber.connect();
+    await this.subscriptionClient.connect();
 
     this.startTimeout();
+  }
+
+  async start() {
+    if (this.startCheckInterval) {
+      clearInterval(this.startCheckInterval);
+    }
+    if (this.stopCheckInterval) {
+      clearInterval(this.stopCheckInterval);
+    }
+    if (this.running) {
+      return;
+    }
+    this.startCheckInterval = setInterval(() => {
+      if (
+        !this.redisClient.isOpen &&
+        !this.subscriptionClient?.isOpen &&
+        !this.running
+      ) {
+        if (this.startCheckInterval) {
+          clearInterval(this.startCheckInterval);
+        }
+        this._start();
+      }
+    }, 100);
+  }
+
+  async stop() {
+    return new Promise<void>((resolve) => {
+      if (this.startCheckInterval) {
+        clearInterval(this.startCheckInterval);
+        if (!this.running) {
+          return;
+        }
+      }
+      if (this.stopCheckInterval) {
+        clearInterval(this.stopCheckInterval);
+      }
+      this.stopCheckInterval = setInterval(async () => {
+        if (this.redisClient.isOpen && this.subscriptionClient?.isOpen) {
+          if (this.stopCheckInterval) {
+            clearInterval(this.stopCheckInterval);
+          }
+          await this._stop();
+          resolve();
+        }
+      }, 100);
+    });
+  }
+
+  async stepdown() {
+    if (this.state === "leader") {
+      if (this.leadershipInterval) {
+        clearInterval(this.leadershipInterval);
+      }
+
+      this.setState("follower");
+      this.votes = 0;
+      this.votedFor = "";
+      this.nodeId = randomString();
+
+      this.startTimeout();
+    }
   }
 }
 export default Candidate;
