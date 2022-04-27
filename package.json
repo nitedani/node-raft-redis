@@ -3,15 +3,28 @@
   "version": "0.0.1",
   "description": "",
   "type": "module",
-  "main": "index.js",
+  "main": "./lib/cjs/index.js",
+  "typings": "./lib/cjs/index.d.ts",
+  "exports": {
+    "import": "./lib/esm/index.js",
+    "require": "./lib/cjs/index.js"
+  },
   "scripts": {
     "start": "ts-node-dev --transpile-only src/index.ts",
     "build": "npm run build:esm && npm run  build:cjs",
     "build:esm": "tsc --outDir lib/esm",
     "build:cjs": "tsc --module commonjs --outDir lib/cjs"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "node",
+    "raft",
+    "redis",
+    "consensus"
+  ],
+  "author": {
+    "email": "nitedani@gmail.com",
+    "name": "Horváth Dániel"
+  },
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^17.0.29",
@@ -21,5 +34,8 @@
   "dependencies": {
     "cuid": "^2.1.8",
     "redis": "^4.0.6"
-  }
+  },
+  "files": [
+    "./lib"
+  ]
 }
