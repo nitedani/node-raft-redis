@@ -126,7 +126,7 @@ export class Candidate extends EventEmitter {
 
   async run() {
     await this.redisClient.connect();
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 1000));
     let count = await this.getNodeCount();
     setInterval(async () => {
       count = await this.getNodeCount();
