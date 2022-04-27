@@ -32,24 +32,22 @@ interface Message {
 type State = "candidate" | "leader" | "follower";
 
 export class Candidate extends EventEmitter {
-  kind: string = "";
+  kind = "";
+  running = false;
+  nodeId = randomString();
   redisClient: RedisClientType;
   subscriptionClient: RedisClientType | null = null;
-  nodeId = randomString();
-
-  state: State = "follower";
-  currentTerm = 1;
-  votedFor = "";
 
   votes = 0;
+  votedFor = "";
+  currentTerm = 1;
+  state: State = "follower";
+
   timeout: NodeJS.Timeout | null = null;
   leadershipInterval: NodeJS.Timer | null = null;
   countNodesInterval: NodeJS.Timer | null = null;
   stopCheckInterval: NodeJS.Timer | null = null;
   startCheckInterval: NodeJS.Timer | null = null;
-
-  running = false;
-  connected = false;
 
   constructor(options: Options) {
     super();
@@ -272,31 +270,34 @@ export class Candidate extends EventEmitter {
     if (this.running) {
       return;
     }
-    this.startCheckInterval = setInterval(() => {
-      if (
-        !this.redisClient.isOpen &&
-        !this.subscriptionClient?.isOpen &&
-        !this.running
-      ) {
-        if (this.startCheckInterval) {
-          clearInterval(this.startCheckInterval);
+    return new Promise<void>((resolve) => {
+      this.startCheckInterval = setInterval(async () => {
+        if (
+          !this.redisClient.isOpen &&
+          !this.subscriptionClient?.isOpen &&
+          !this.running
+        ) {
+          if (this.startCheckInterval) {
+            clearInterval(this.startCheckInterval);
+          }
+          await this._start();
+          resolve();
         }
-        this._start();
-      }
-    }, 100);
+      }, 100);
+    });
   }
 
   async stop() {
+    if (this.startCheckInterval) {
+      clearInterval(this.startCheckInterval);
+      if (!this.running) {
+        return;
+      }
+    }
+    if (this.stopCheckInterval) {
+      clearInterval(this.stopCheckInterval);
+    }
     return new Promise<void>((resolve) => {
-      if (this.startCheckInterval) {
-        clearInterval(this.startCheckInterval);
-        if (!this.running) {
-          return;
-        }
-      }
-      if (this.stopCheckInterval) {
-        clearInterval(this.stopCheckInterval);
-      }
       this.stopCheckInterval = setInterval(async () => {
         if (this.redisClient.isOpen && this.subscriptionClient?.isOpen) {
           if (this.stopCheckInterval) {
