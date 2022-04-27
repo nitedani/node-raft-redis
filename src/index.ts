@@ -154,8 +154,10 @@ export class Candidate extends EventEmitter {
       }
       if (message.type === "request") {
         if (
-          this.currentTerm <= message.currentTerm ||
-          this.state === "follower"
+          this.currentTerm < message.currentTerm ||
+          (this.state === "follower" &&
+            this.currentTerm <= message.currentTerm &&
+            this.votedFor === message.from)
         ) {
           this.state = "follower";
           this.currentTerm = message.currentTerm;
