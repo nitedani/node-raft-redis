@@ -266,13 +266,13 @@ export class Candidate extends EventEmitter {
     await this.subscriptionClient?.subscribe(
       `consensus-messages:${this.kind}:${this.__instanceId}`,
       (str) => {
-        const { message, from } = JSON.parse(str);
+        const { message, from, fromLeader } = JSON.parse(str);
         if (from !== this.__instanceId) {
           this.emit("message", { message, from });
           if (this.state === "leader") {
             this.emit("message:from:follower", { message, from });
           }
-          if (this.votedFor === from) {
+          if (fromLeader) {
             this.emit("message:from:leader", { message, from });
           }
         }
@@ -295,10 +295,10 @@ export class Candidate extends EventEmitter {
     await this.subscriptionClient?.subscribe(
       `consensus-messages:${this.kind}:followers`,
       (str) => {
-        const { message, from } = JSON.parse(str);
+        const { message, from, fromLeader } = JSON.parse(str);
         if (this.__state === "follower" && from !== this.__instanceId) {
           this.emit("message", { message, from });
-          if (this.votedFor === from) {
+          if (fromLeader) {
             this.emit("message:from:leader", { message, from });
           }
         }
@@ -365,9 +365,12 @@ export class Candidate extends EventEmitter {
     this.subscriptionClient.subscribe(
       `consensus-messages:${this.kind}`,
       (str) => {
-        const { message, from } = JSON.parse(str);
+        const { message, from, fromLeader } = JSON.parse(str);
         if (from !== this.__instanceId) {
           this.emit("message", { message, from });
+          if (fromLeader) {
+            this.emit("message:from:leader", { message, from });
+          }
         }
       }
     );
@@ -511,21 +514,33 @@ export class Candidate extends EventEmitter {
   async messageFollowers(message: string) {
     await this.redisClient.publish(
       `consensus-messages:${this.kind}:followers`,
-      JSON.stringify({ message, from: this.__instanceId })
+      JSON.stringify({
+        message,
+        from: this.__instanceId,
+        fromLeader: this.__state === "leader",
+      })
     );
   }
 
   async messageTo(to: string, message: string) {
     await this.redisClient.publish(
       `consensus-messages:${this.kind}:${to}`,
-      JSON.stringify({ message, from: this.__instanceId })
+      JSON.stringify({
+        message,
+        from: this.__instanceId,
+        fromLeader: this.__state === "leader",
+      })
     );
   }
 
   async messageAll(message: string) {
     await this.redisClient.publish(
       `consensus-messages:${this.kind}`,
-      JSON.stringify({ message, from: this.__instanceId })
+      JSON.stringify({
+        message,
+        from: this.__instanceId,
+        fromLeader: this.__state === "leader",
+      })
     );
   }
 
