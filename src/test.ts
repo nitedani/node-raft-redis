@@ -7,21 +7,33 @@ const candidate = new Candidate({
     // or url: 'redis://alice:foobared@awesome.redis.server:6380'
   },
   kind: "my-service",
+  meta: {
+    someKey: Math.random(),
+  },
 });
 
 candidate.on("elected", async () => {
   console.log("elected");
-  // You can be sure only this instance is the leader.
-
+  // You can be sure only this instance is the leader (at this moment).
   candidate.messageFollowers("Hello from leader");
 
-  // The leader can start a re-election with stepdown()
+  // The leader can start a re-election with reelect()
   // It is possible for this instance to be elected again.
-  // candidate.stepdown();
+  //candidate.reelect();
 });
 
-candidate.on("message", (message) => {
-  console.log(message);
+candidate.on("message", async ({ message, from }) => {
+  const currentLeader = await candidate.getLeader();
+  const isFromLeader = from === currentLeader?.id;
+
+  if (isFromLeader) {
+    candidate.messageTo(from, "Echo from follower");
+  }
+});
+
+candidate.on("message:from:follower", ({ message, from }) => {
+  // Will be logged only in the leader instance.
+  // console.log(message, from);
 });
 
 candidate.on("error", (err) => {
@@ -29,11 +41,3 @@ candidate.on("error", (err) => {
 });
 
 candidate.start();
-
-/*
-Candidate.stop() will stop the candidate's internal processes and
-disconnects from redis.
-It will result in a re-election.
-
-// candidate.stop()
-*/
